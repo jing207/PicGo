@@ -1,27 +1,16 @@
-import fse from 'fs-extra'
 import path from 'path'
-import dayjs from 'dayjs'
-import util from 'util'
-import { dbPathDir } from 'apis/core/datastore/dbChecker'
-const STORE_PATH = dbPathDir()
-const LOG_PATH = path.join(STORE_PATH, '/picgo.log')
+import { app } from 'electron'
+import { getLogger } from 'apis/core/utils/localLogger'
+const STORE_PATH = app.getPath('userData')
+const LOG_PATH = path.join(STORE_PATH, 'picgo-gui-local.log')
+
+const logger = getLogger(LOG_PATH)
 
 // since the error may occur in picgo-core
 // so we can't use the log from picgo
-export const loggerWriter = (error: Error) => {
-  let log = `${dayjs().format('YYYY-MM-DD HH:mm:ss')} [PicGo ERROR] startup error`
-  if (error?.stack) {
-    log += `\n------Error Stack Begin------\n${util.format(error.stack)}\n-------Error Stack End-------\n`
-  } else {
-    const msg = JSON.stringify(error)
-    log += `${msg}\n`
-  }
-  fse.appendFileSync(LOG_PATH, log)
-}
 
-const handleProcessError = (error: Error) => {
-  console.error(error)
-  loggerWriter(error)
+const handleProcessError = (error: Error | string) => {
+  logger('error', error)
 }
 
 process.on('uncaughtException', error => {
@@ -31,3 +20,21 @@ process.on('uncaughtException', error => {
 process.on('unhandledRejection', (error: any) => {
   handleProcessError(error)
 })
+
+// thanks to https://github.com/camunda/camunda-modeler/pull/3314
+function bootstrapEPIPESuppression () {
+  let suppressing = false
+  function logEPIPEErrorOnce () {
+    if (suppressing) {
+      return
+    }
+
+    suppressing = true
+    handleProcessError('Detected EPIPE error; suppressing further EPIPE errors')
+  }
+
+  require('epipebomb')(process.stdout, logEPIPEErrorOnce)
+  require('epipebomb')(process.stderr, logEPIPEErrorOnce)
+}
+
+bootstrapEPIPESuppression()

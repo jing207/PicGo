@@ -1,4 +1,7 @@
 // global
+
+type FN = (...args: any) => any
+
 interface IObj {
   [propName: string]: any
 }
@@ -47,6 +50,12 @@ interface ImgInfo {
   id?: string
   type?: string
   [propName: string]: any
+}
+
+interface IGalleryItem extends ImgInfo {
+  src: string
+  key: string
+  intro: string
 }
 
 interface IPicBedType {
@@ -122,7 +131,7 @@ interface IBounds {
 }
 
 // PicGo Types
-type ICtx = import('picgo')
+type ICtx = import('picgo').PicGo
 interface IPicGoPlugin {
   name: string
   fullName: string
@@ -151,6 +160,37 @@ interface IPicGoPluginConfig {
   type: string
   required: boolean
   default?: any
+  alias?: string
+  choices?: {
+    name?: string
+    value?: any
+  }[]
+  /** support markdown */
+  tips?: string
+  [propName: string]: any
+}
+
+interface IPicGoPluginShowConfigDialogOption {
+  title: string
+  config: IPicGoPluginConfig[]
+  tips?: string
+  confirmText?: string
+  cancelText?: string
+}
+
+interface IPicGoPluginOriginConfig {
+  name: string
+  type: string
+  required: boolean
+  default?: any
+  alias?: string
+  choices?: {
+    name?: string
+    value?: any
+  }[] | (() => {
+    name?: string
+    value?: any
+  }[])
   [propName: string]: any
 }
 
@@ -173,9 +213,10 @@ interface INPMSearchResultObject {
     version: string
     description: string
     keywords: string[]
-    author: {
-      name: string
-    }
+    maintainers: Array<{
+      email: string
+      username: string
+    }>
     links: {
       npm: string
       homepage: string
@@ -188,10 +229,12 @@ type IDispose = () => void
 // GuiApi
 interface IGuiApi {
   showInputBox: (options: IShowInputBoxOption) => Promise<string>
-  showFileExplorer: (options: IShowFileExplorerOption) => Promise<string>
+  showFileExplorer: (options: IShowFileExplorerOption) => Promise<string[]>
   upload: (input: IUploadOption) => Promise<ImgInfo[]>
   showNotification: (options?: IShowNotificationOption) => void
   showMessageBox: (options?: IShowMessageBoxOption) => Promise<IShowMessageBoxResult>
+  showConfigDialog: <T extends IStringKeyMap>(options: IPicGoPluginShowConfigDialogOption) => Promise<T | false>
+  galleryDB: import('@picgo/store').DBStore
 }
 interface IShowInputBoxOption {
   value?: string
@@ -206,7 +249,7 @@ type IUploadOption = string[]
 interface IShowNotificationOption {
   title: string
   body: string
-  icon?: string | import('electron').NativeImage
+  // icon?: string | import('electron').NativeImage
 }
 
 interface IPrivateShowNotificationOption extends IShowNotificationOption{
@@ -214,6 +257,8 @@ interface IPrivateShowNotificationOption extends IShowNotificationOption{
    * click notification to copy the body
    */
   clickToCopy?: boolean
+  copyContent?: string // something to copy
+  clickFn?: () => void
 }
 
 interface IShowMessageBoxOption {
@@ -287,7 +332,8 @@ interface ITcYunConfig {
   area: string,
   path: string,
   customUrl: string,
-  version: 'v4' | 'v5'
+  version: 'v4' | 'v5',
+  options: string
 }
 
 interface IUpYunConfig {
@@ -326,3 +372,78 @@ interface IStringKeyMap {
 type ILogArgvType = string | number
 
 type ILogArgvTypeWithError = ILogArgvType | Error
+
+interface IMiniWindowPos {
+  x: number,
+  y: number,
+  height: number,
+  width: number
+}
+
+type PromiseResType<T> = T extends Promise<infer R> ? R : T
+
+// type ILocalesKey = import('#/i18n/zh-CN').ILocalesKey
+
+interface II18nItem {
+  label: string
+  value: string
+}
+
+interface IRemoteNotice {
+  version: number
+  list: Array<{
+    versions: string[] // matched picgo version
+    actions: IRemoteNoticeAction[]
+    versionMatch?: 'exact' | 'gte' | 'lte'
+  }>
+}
+
+interface IRemoteNoticeAction {
+  type: import('#/types/enum').IRemoteNoticeActionType
+  // trigger time
+  hooks: import('#/types/enum').IRemoteNoticeTriggerHook[]
+  id: string
+  // trigger count: always or once; default: once
+  triggerCount: import('#/types/enum').IRemoteNoticeTriggerCount
+
+  data?: {
+    title?: string
+    content?: string
+    desc?: string // action desc
+    buttons?: IRemoteNoticeButton[]
+    url?: string
+    copyToClipboard?: string
+    options: any // for other case
+  }
+}
+
+interface IRemoteNoticeButton {
+  label: string
+  labelEN?: string
+  type: 'confirm' | 'cancel' | 'other'
+  action: IRemoteNoticeAction
+}
+
+interface IRemoteNoticeLocalCountStorage {
+  [id: string]: true | number
+}
+
+interface IUploaderListItemMetaInfo {
+  _id: string
+  _configName: string
+  _updatedAt: number
+  _createdAt: number
+}
+
+interface IUploaderConfig { 
+  [picBedType: string]: IUploaderConfigItem
+}
+
+interface IUploaderConfigItem {
+  configList: IUploaderConfigListItem[]
+  defaultId: string
+}
+
+type IUploaderConfigListItem = IStringKeyMap & IUploaderListItemMetaInfo
+
+type ISwitchValueType = boolean | string | number

@@ -1,9 +1,8 @@
-import PicGoCore from '~/universal/types/picgo'
 import { dbChecker, dbPathChecker } from 'apis/core/datastore/dbChecker'
 import pkg from 'root/package.json'
-// eslint-disable-next-line
-const requireFunc = typeof __webpack_require__ === 'function' ? __non_webpack_require__ : require
-const PicGo = requireFunc('picgo') as typeof PicGoCore
+import { PicGo } from 'picgo'
+import db from 'apis/core/datastore'
+import debounce from 'lodash/debounce'
 
 const CONFIG_PATH = dbPathChecker()
 
@@ -18,4 +17,18 @@ picgo.saveConfig({
 global.PICGO_GUI_VERSION = pkg.version
 picgo.GUI_VERSION = global.PICGO_GUI_VERSION
 
-export default picgo! as PicGoCore
+const originPicGoSaveConfig = picgo.saveConfig.bind(picgo)
+
+function flushDB () {
+  db.flush()
+}
+
+const debounced = debounce(flushDB, 1000)
+
+picgo.saveConfig = (config: IStringKeyMap) => {
+  originPicGoSaveConfig(config)
+  // flush electron's db
+  debounced()
+}
+
+export default picgo

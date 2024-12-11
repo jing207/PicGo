@@ -1,9 +1,18 @@
 <template>
   <div id="upload-view">
     <el-row :gutter="16">
-      <el-col :span="20" :offset="2">
-        <div class="view-title">
-          图片上传 - {{ picBedName }} <i class="el-icon-caret-bottom" @click="handleChangePicBed"></i>
+      <el-col
+        :span="20"
+        :offset="2"
+      >
+        <div class="view-title text-[22px]">
+          {{ $T('PICTURE_UPLOAD') }} - {{ picBedName }} - {{ configName }}
+          <el-icon
+            style="cursor: pointer; margin-left: 4px;"
+            @click="handleChangePicBed"
+          >
+            <CaretBottom />
+          </el-icon>
         </div>
         <div
           id="upload-area"
@@ -12,12 +21,22 @@
           @dragover.prevent="dragover = true"
           @dragleave.prevent="dragover = false"
         >
-          <div id="upload-dragger" @click="openUplodWindow">
-            <i class="el-icon-upload"></i>
+          <div
+            id="upload-dragger"
+            @click="openUploadWindow"
+          >
+            <el-icon>
+              <UploadFilled />
+            </el-icon>
             <div class="upload-dragger__text">
-              将文件拖到此处，或 <span>点击上传</span>
+              {{ $T('DRAG_FILE_TO_HERE') }} <span>{{ $T('CLICK_TO_UPLOAD') }}</span>
             </div>
-            <input type="file" id="file-uploader" @change="onChange" multiple>
+            <input
+              id="file-uploader"
+              type="file"
+              multiple
+              @change="onChange"
+            >
           </div>
         </div>
         <el-progress
@@ -26,43 +45,73 @@
           class="upload-progress"
           :class="{ 'show': showProgress }"
           :status="showError ? 'exception' : undefined"
-        ></el-progress>
+        />
         <div class="paste-style">
           <div class="el-col-16">
             <div class="paste-style__text">
-              链接格式
+              {{ $T('LINK_FORMAT') }}
             </div>
-            <el-radio-group v-model="pasteStyle" size="mini"
+            <el-radio-group
+              v-model="pasteStyle"
+              size="small"
               @change="handlePasteStyleChange"
             >
               <el-radio-button label="markdown">
                 Markdown
               </el-radio-button>
-              <el-radio-button label="HTML"></el-radio-button>
-              <el-radio-button label="URL"></el-radio-button>
-              <el-radio-button label="UBB"></el-radio-button>
-              <el-radio-button label="Custom" title="自定义"></el-radio-button>
+              <el-radio-button label="HTML" />
+              <el-radio-button label="URL" />
+              <el-radio-button label="UBB" />
+              <el-radio-button
+                label="Custom"
+                :title="$T('CUSTOM')"
+              />
             </el-radio-group>
           </div>
           <div class="el-col-8">
             <div class="paste-style__text">
-              快捷上传
+              {{ $T('QUICK_UPLOAD') }}
             </div>
-            <el-button type="primary" round size="mini" @click="uploadClipboardFiles" class="quick-upload" style="width: 50%">剪贴板图片</el-button>
-            <el-button type="primary" round size="mini" @click="uploadURLFiles" class="quick-upload" style="width: 46%; margin-left: 6px">URL</el-button>
+            <el-button
+              type="primary"
+              round
+              size="small"
+              class="quick-upload"
+              style="width: 50%"
+              @click="uploadClipboardFiles"
+            >
+              {{ $T('CLIPBOARD_PICTURE') }}
+            </el-button>
+            <el-button
+              type="primary"
+              round
+              size="small"
+              class="quick-upload"
+              style="width: 46%; margin-left: 6px"
+              @click="uploadURLFiles"
+            >
+              URL
+            </el-button>
           </div>
         </div>
       </el-col>
     </el-row>
   </div>
 </template>
-<script lang="ts">
-import { Component, Vue, Watch } from 'vue-property-decorator'
+<script lang="ts" setup>
+// import { Component, Vue, Watch } from 'vue-property-decorator'
+import { T as $T } from '@/i18n'
+import $bus from '@/utils/bus'
+import { getConfig, saveConfig, sendToMain } from '@/utils/dataSender'
+import { CaretBottom, UploadFilled } from '@element-plus/icons-vue'
 import {
-  ipcRenderer,
-  IpcRendererEvent
+  IpcRendererEvent,
+  ipcRenderer
 } from 'electron'
+import { ElMessage as $message } from 'element-plus'
+import { onBeforeMount, onBeforeUnmount, ref, watch } from 'vue'
 import {
+  GET_PICBEDS,
   SHOW_INPUT_BOX,
   SHOW_INPUT_BOX_RESPONSE,
   SHOW_UPLOAD_PAGE_MENU
@@ -70,170 +119,182 @@ import {
 import {
   isUrl
 } from '~/universal/utils/common'
-@Component({
-  name: 'upload'
-})
-export default class extends Vue {
-  dragover = false
-  progress = 0
-  showProgress = false
-  showError = false
-  pasteStyle = ''
-  picBed: IPicBedType[] = []
-  picBedName = ''
-  mounted () {
-    ipcRenderer.on('uploadProgress', (event: IpcRendererEvent, progress: number) => {
-      if (progress !== -1) {
-        this.showProgress = true
-        this.progress = progress
-      } else {
-        this.progress = 100
-        this.showError = true
-      }
-    })
-    this.getPasteStyle()
-    this.getDefaultPicBed()
-    ipcRenderer.on('syncPicBed', () => {
-      this.getDefaultPicBed()
-    })
-    ipcRenderer.send('getPicBeds')
-    ipcRenderer.on('getPicBeds', this.getPicBeds)
-    this.$bus.$on(SHOW_INPUT_BOX_RESPONSE, this.handleInputBoxValue)
-  }
-
-  @Watch('progress')
-  onProgressChange (val: number) {
-    if (val === 100) {
-      setTimeout(() => {
-        this.showProgress = false
-        this.showError = false
-      }, 1000)
-      setTimeout(() => {
-        this.progress = 0
-      }, 1200)
+const dragover = ref(false)
+const progress = ref(0)
+const showProgress = ref(false)
+const showError = ref(false)
+const pasteStyle = ref('')
+const picBed = ref<IPicBedType[]>([])
+const picBedName = ref('')
+const configName = ref('')
+onBeforeMount(() => {
+  ipcRenderer.on('uploadProgress', (event: IpcRendererEvent, _progress: number) => {
+    if (_progress !== -1) {
+      showProgress.value = true
+      progress.value = _progress
+    } else {
+      progress.value = 100
+      showError.value = true
     }
-  }
+  })
+  getPasteStyle()
+  getDefaultPicBed()
+  ipcRenderer.on('syncPicBed', () => {
+    getDefaultPicBed()
+  })
+  sendToMain(GET_PICBEDS)
+  ipcRenderer.on(GET_PICBEDS, getPicBeds)
+  $bus.on(SHOW_INPUT_BOX_RESPONSE, handleInputBoxValue)
+})
 
-  beforeDestroy () {
-    this.$bus.$off(SHOW_INPUT_BOX_RESPONSE)
-    ipcRenderer.removeAllListeners('uploadProgress')
-    ipcRenderer.removeAllListeners('syncPicBed')
-    ipcRenderer.removeListener('getPicBeds', this.getPicBeds)
-  }
+watch(progress, onProgressChange)
 
-  onDrop (e: DragEvent) {
-    this.dragover = false
-    const items = e.dataTransfer!.items
+function onProgressChange (val: number) {
+  if (val === 100) {
+    setTimeout(() => {
+      showProgress.value = false
+      showError.value = false
+    }, 1000)
+    setTimeout(() => {
+      progress.value = 0
+    }, 1200)
+  }
+}
+
+onBeforeUnmount(() => {
+  $bus.off(SHOW_INPUT_BOX_RESPONSE)
+  ipcRenderer.removeAllListeners('uploadProgress')
+  ipcRenderer.removeAllListeners('syncPicBed')
+  ipcRenderer.removeListener(GET_PICBEDS, getPicBeds)
+})
+
+function onDrop (e: DragEvent) {
+  dragover.value = false
+  const items = e.dataTransfer?.items!
+  const files = e.dataTransfer?.files!
+
+  // send files first
+  if (files?.length) {
+    ipcSendFiles(e.dataTransfer?.files!)
+  } else {
     if (items.length === 2 && items[0].type === 'text/uri-list') {
-      this.handleURLDrag(items, e.dataTransfer!)
+      handleURLDrag(items, e.dataTransfer!)
     } else if (items[0].type === 'text/plain') {
       const str = e.dataTransfer!.getData(items[0].type)
       if (isUrl(str)) {
-        ipcRenderer.send('uploadChoosedFiles', [{ path: str }])
+        sendToMain('uploadChoosedFiles', [{ path: str }])
       } else {
-        this.$message.error('请拖入合法的图片文件或者图片URL地址')
+        $message.error($T('TIPS_DRAG_VALID_PICTURE_OR_URL'))
       }
-    } else {
-      this.ipcSendFiles(e.dataTransfer!.files)
     }
   }
+}
 
-  handleURLDrag (items: DataTransferItemList, dataTransfer: DataTransfer) {
-    // text/html
-    // Use this data to get a more precise URL
-    const urlString = dataTransfer.getData(items[1].type)
-    const urlMatch = urlString.match(/<img.*src="(.*?)"/)
-    if (urlMatch) {
-      ipcRenderer.send('uploadChoosedFiles', [
-        {
-          path: urlMatch[1]
-        }
-      ])
-    } else {
-      this.$message.error('请拖入合法的图片文件或者图片URL地址')
-    }
-  }
-
-  openUplodWindow () {
-    document.getElementById('file-uploader')!.click()
-  }
-
-  onChange (e: any) {
-    this.ipcSendFiles(e.target.files);
-    (document.getElementById('file-uploader') as HTMLInputElement).value = ''
-  }
-
-  ipcSendFiles (files: FileList) {
-    const sendFiles: IFileWithPath[] = []
-    Array.from(files).forEach((item) => {
-      const obj = {
-        name: item.name,
-        path: item.path
+function handleURLDrag (items: DataTransferItemList, dataTransfer: DataTransfer) {
+  // text/html
+  // Use this data to get a more precise URL
+  const urlString = dataTransfer.getData(items[1].type)
+  const urlMatch = urlString.match(/<img.*src="(.*?)"/)
+  if (urlMatch) {
+    sendToMain('uploadChoosedFiles', [
+      {
+        path: urlMatch[1]
       }
-      sendFiles.push(obj)
-    })
-    ipcRenderer.send('uploadChoosedFiles', sendFiles)
+    ])
+  } else {
+    $message.error($T('TIPS_DRAG_VALID_PICTURE_OR_URL'))
   }
+}
 
-  async getPasteStyle () {
-    this.pasteStyle = await this.getConfig('settings.pasteStyle') || 'markdown'
-  }
+function openUploadWindow () {
+  document.getElementById('file-uploader')!.click()
+}
 
-  handlePasteStyleChange (val: string) {
-    this.saveConfig({
-      'settings.pasteStyle': val
-    })
-  }
+function onChange (e: any) {
+  ipcSendFiles(e.target.files);
+  (document.getElementById('file-uploader') as HTMLInputElement).value = ''
+}
 
-  uploadClipboardFiles () {
-    ipcRenderer.send('uploadClipboardFilesFromUploadPage')
-  }
-
-  async uploadURLFiles () {
-    const str = await navigator.clipboard.readText()
-    this.$bus.$emit(SHOW_INPUT_BOX, {
-      value: isUrl(str) ? str : '',
-      title: '请输入URL',
-      placeholder: 'http://或者https://开头'
-    })
-  }
-
-  handleInputBoxValue (val: string) {
-    if (val === '') return false
-    if (isUrl(val)) {
-      ipcRenderer.send('uploadChoosedFiles', [{
-        path: val
-      }])
-    } else {
-      this.$message.error('请输入合法的URL')
+function ipcSendFiles (files: FileList) {
+  const sendFiles: IFileWithPath[] = []
+  Array.from(files).forEach((item) => {
+    const obj = {
+      name: item.name,
+      path: item.path
     }
-  }
+    sendFiles.push(obj)
+  })
+  sendToMain('uploadChoosedFiles', sendFiles)
+}
 
-  async getDefaultPicBed () {
-    const currentPicBed = await this.getConfig<string>('picBed.current')
-    this.picBed.forEach(item => {
-      if (item.type === currentPicBed) {
-        this.picBedName = item.name
-      }
-    })
-  }
+async function getPasteStyle () {
+  pasteStyle.value = await getConfig('settings.pasteStyle') || 'markdown'
+}
 
-  getPicBeds (event: Event, picBeds: IPicBedType[]) {
-    this.picBed = picBeds
-    this.getDefaultPicBed()
-  }
+function handlePasteStyleChange (val: string | number | boolean) {
+  saveConfig({
+    'settings.pasteStyle': val
+  })
+}
 
-  async handleChangePicBed () {
-    ipcRenderer.send(SHOW_UPLOAD_PAGE_MENU)
+function uploadClipboardFiles () {
+  sendToMain('uploadClipboardFilesFromUploadPage')
+}
+
+async function uploadURLFiles () {
+  const str = await navigator.clipboard.readText()
+  $bus.emit(SHOW_INPUT_BOX, {
+    value: isUrl(str) ? str : '',
+    title: $T('TIPS_INPUT_URL'),
+    placeholder: $T('TIPS_HTTP_PREFIX')
+  })
+}
+
+function handleInputBoxValue (val: string) {
+  if (val === '') return
+  if (isUrl(val)) {
+    sendToMain('uploadChoosedFiles', [{
+      path: val
+    }])
+  } else {
+    $message.error($T('TIPS_INPUT_VALID_URL'))
   }
+}
+
+async function getDefaultPicBed () {
+  const currentPicBed = await getConfig<string>('picBed.current')
+  const currentConfigName = await getConfig<string>(`picBed.${currentPicBed}._configName`) || 'Default'
+  picBed.value.forEach(item => {
+    if (item.type === currentPicBed) {
+      picBedName.value = item.name
+    }
+  })
+  configName.value = currentConfigName
+}
+
+function getPicBeds (event: Event, picBeds: IPicBedType[]) {
+  picBed.value = picBeds
+  getDefaultPicBed()
+}
+
+async function handleChangePicBed () {
+  sendToMain(SHOW_UPLOAD_PAGE_MENU)
+}
+</script>
+<script lang="ts">
+export default {
+  name: 'UploadPage'
 }
 </script>
 <style lang='stylus'>
 .view-title
+  display flex
   color #eee
   font-size 20px
   text-align center
   margin 10px auto
+  align-items center
+  justify-content center
 #upload-view
   .view-title
     margin 20px auto
@@ -274,6 +335,8 @@ export default class extends Vue {
   .paste-style
     text-align center
     margin-top 16px
+    display flex
+    align-items flex-end
     &__text
       font-size 12px
       color #eeeeee

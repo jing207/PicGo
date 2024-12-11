@@ -2,7 +2,9 @@ import { DBStore } from '@picgo/store'
 import ConfigStore from '~/main/apis/core/datastore'
 import path from 'path'
 import fse from 'fs-extra'
-import PicGoCore from '#/types/picgo'
+import { PicGo as PicGoCore } from 'picgo'
+import { T } from '~/main/i18n'
+import { SHORTKEY_COMMAND_UPLOAD } from 'apis/core/bus/constants'
 // from v2.1.2
 const updateShortKeyFromVersion212 = (db: typeof ConfigStore, shortKeyConfig: IShortKeyConfigs | IOldShortKeyConfigs) => {
   // #557 极端情况可能会出现配置不存在，需要重新写入
@@ -11,18 +13,18 @@ const updateShortKeyFromVersion212 = (db: typeof ConfigStore, shortKeyConfig: IS
       enable: true,
       key: 'CommandOrControl+Shift+P',
       name: 'upload',
-      label: '快捷上传'
+      label: T('QUICK_UPLOAD')
     }
     db.set('settings.shortKey[picgo:upload]', defaultShortKeyConfig)
     return true
   }
   if (shortKeyConfig.upload) {
     // @ts-ignore
-    shortKeyConfig['picgo:upload'] = {
+    shortKeyConfig[SHORTKEY_COMMAND_UPLOAD] = {
       enable: true,
       key: shortKeyConfig.upload,
       name: 'upload',
-      label: '快捷上传'
+      label: T('QUICK_UPLOAD')
     }
     // @ts-ignore
     delete shortKeyConfig.upload
@@ -33,7 +35,12 @@ const updateShortKeyFromVersion212 = (db: typeof ConfigStore, shortKeyConfig: IS
 }
 
 const migrateGalleryFromVersion230 = async (configDB: typeof ConfigStore, galleryDB: DBStore, picgo: PicGoCore) => {
-  const originGallery: ImgInfo[] = configDB.get('uploaded')
+  const originGallery: ImgInfo[] = picgo.getConfig('uploaded')
+  // if hasMigrate, we don't need to migrate
+  const hasMigrate: boolean = configDB.get('__migrateUploaded')
+  if (hasMigrate) {
+    return
+  }
   const configPath = configDB.getConfigPath()
   const configBakPath = path.join(path.dirname(configPath), 'config.bak.json')
   // migrate gallery from config to gallery db
@@ -43,7 +50,8 @@ const migrateGalleryFromVersion230 = async (configDB: typeof ConfigStore, galler
     }
     await galleryDB.insertMany(originGallery)
     picgo.saveConfig({
-      uploaded: []
+      uploaded: [],
+      __migrateUploaded: true
     })
   }
 }

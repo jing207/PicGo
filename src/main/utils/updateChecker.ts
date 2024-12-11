@@ -1,11 +1,12 @@
 import { dialog, shell } from 'electron'
 import db from '~/main/apis/core/datastore'
-import axios from 'axios'
 import pkg from 'root/package.json'
 import { lt } from 'semver'
+import { T } from '~/main/i18n'
+import { getLatestVersion } from '~/main/utils/getLatestVersion'
 const version = pkg.version
-const releaseUrl = 'https://api.github.com/repos/Molunerfinn/PicGo/releases/latest'
-const releaseUrlBackup = 'https://cdn.jsdelivr.net/gh/Molunerfinn/PicGo@latest/package.json'
+// const releaseUrl = 'https://api.github.com/repos/Molunerfinn/PicGo/releases'
+// const releaseUrlBackup = 'https://picgo-1251750343.cos.ap-chengdu.myqcloud.com'
 const downloadUrl = 'https://github.com/Molunerfinn/PicGo/releases/latest'
 
 const checkVersion = async () => {
@@ -15,25 +16,20 @@ const checkVersion = async () => {
     showTip = true
   }
   if (showTip) {
-    let res: any
-    try {
-      res = await axios.get(releaseUrl).catch(async () => {
-        const result = await axios.get(releaseUrlBackup)
-        return result
-      })
-    } catch (err) {
-      console.log(err)
-    }
-    if (res.status === 200) {
-      const latest = res.data.version || res.data.name
+    const isCheckBetaUpdate = db.get('settings.checkBetaUpdate') !== false
+    const res: string = await getLatestVersion(isCheckBetaUpdate)
+    if (res !== '') {
+      const latest = res
       const result = compareVersion2Update(version, latest)
       if (result) {
         dialog.showMessageBox({
           type: 'info',
-          title: '发现新版本',
+          title: T('FIND_NEW_VERSION'),
           buttons: ['Yes', 'No'],
-          message: `发现新版本${latest}，更新了很多功能，是否去下载最新的版本？`,
-          checkboxLabel: '以后不再提醒',
+          message: T('TIPS_FIND_NEW_VERSION', {
+            v: latest
+          }),
+          checkboxLabel: T('NO_MORE_NOTICE'),
           checkboxChecked: false
         }).then(res => {
           if (res.response === 0) { // if selected yes

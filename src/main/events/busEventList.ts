@@ -6,7 +6,7 @@ import {
 import {
   createMenu
 } from 'apis/app/system'
-import { IWindowList } from 'apis/app/window/constants'
+import { IWindowList } from '#/types/enum'
 import windowManager from 'apis/app/window/windowManager'
 import {
   UPLOAD_WITH_FILES,
@@ -21,7 +21,6 @@ import {
 } from '@core/bus/constants'
 function initEventCenter () {
   const eventList: any = {
-    'picgo:upload': uploadClipboardFiles,
     [UPLOAD_WITH_CLIPBOARD_FILES]: busCallUploadClipboardFiles,
     [UPLOAD_WITH_FILES]: busCallUploadFiles,
     [GET_WINDOW_ID]: busCallGetWindowId,

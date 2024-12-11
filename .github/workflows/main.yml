@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-10.15]
+        os: [ubuntu-latest, macos-14]
 
     # create steps
     steps:
@@ -35,7 +35,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v2
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '16.x'
 
       - name: Install system deps
         if: matrix.os == 'ubuntu-latest'
@@ -50,6 +50,12 @@ jobs:
 
       - name: Build  & release app
         run: |
-          npm run release
+          yarn release
+          yarn upload-dist
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PICGO_ENV_COS_SECRET_ID: ${{ secrets.PICGO_ENV_COS_SECRET_ID }}
+          PICGO_ENV_COS_SECRET_KEY: ${{ secrets.PICGO_ENV_COS_SECRET_KEY }}
+          PICGO_ENV_S3_SECRET_ID: ${{ secrets.PICGO_ENV_S3_SECRET_ID }}
+          PICGO_ENV_S3_SECRET_KEY: ${{ secrets.PICGO_ENV_S3_SECRET_KEY }}
+          PICGO_ENV_S3_ACCOUNT_ID: ${{ secrets.PICGO_ENV_S3_ACCOUNT_ID }}

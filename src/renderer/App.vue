@@ -1,12 +1,43 @@
 <template>
   <div id="app">
-    <router-view></router-view>
+    <router-view />
   </div>
 </template>
 
-<script>
+<script lang="ts" setup>
+import { useStore } from '@/hooks/useStore'
+import { onBeforeMount, onMounted, onUnmounted } from 'vue'
+import { getConfig } from './utils/dataSender'
+import type { IConfig } from 'picgo'
+import bus from './utils/bus'
+import { FORCE_UPDATE } from '~/universal/events/constants'
+import { useATagClick } from './hooks/useATagClick'
+
+useATagClick()
+
+const store = useStore()
+onBeforeMount(async () => {
+  const config = await getConfig<IConfig>()
+  if (config) {
+    store?.setDefaultPicBed(config?.picBed?.uploader || config?.picBed?.current || 'smms')
+  }
+})
+
+onMounted(() => {
+  bus.on(FORCE_UPDATE, () => {
+    store?.updateForceUpdateTime()
+  })
+})
+
+onUnmounted(() => {
+  bus.off(FORCE_UPDATE)
+})
+
+</script>
+
+<script lang="ts">
 export default {
-  name: 'picgo'
+  name: 'PicGoApp'
 }
 </script>
 

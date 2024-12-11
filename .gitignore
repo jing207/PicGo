@@ -17,3 +17,8 @@ docs/dist/
 .env.*.local
 dist_electron/
 test.js
+.env
+scripts/*.yml
+
+#Electron-builder output
+/dist_electron

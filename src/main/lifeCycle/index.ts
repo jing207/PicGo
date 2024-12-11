@@ -10,10 +10,9 @@ import {
 } from 'vue-cli-plugin-electron-builder/lib'
 import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-installer'
 import beforeOpen from '~/main/utils/beforeOpen'
-import fixPath from 'fix-path'
 import ipcList from '~/main/events/ipcList'
 import busEventList from '~/main/events/busEventList'
-import { IWindowList } from 'apis/app/window/constants'
+import { IRemoteNoticeTriggerHook, IWindowList } from '#/types/enum'
 import windowManager from 'apis/app/window/windowManager'
 import {
   updateShortKeyFromVersion212,
@@ -24,7 +23,7 @@ import {
   uploadClipboardFiles
 } from 'apis/app/uploader/apis'
 import {
-  createTray
+  createTray, handleDockIcon
 } from 'apis/app/system'
 import server from '~/main/server/index'
 import updateChecker from '~/main/utils/updateChecker'
@@ -32,9 +31,13 @@ import shortKeyHandler from 'apis/app/shortKey/shortKeyHandler'
 import { getUploadFiles } from '~/main/utils/handleArgv'
 import db, { GalleryDB } from '~/main/apis/core/datastore'
 import bus from '@core/bus'
-import { privacyManager } from '~/main/utils/privacyManager'
 import logger from 'apis/core/picgo/logger'
 import picgo from 'apis/core/picgo'
+import fixPath from './fixPath'
+import { initI18n } from '~/main/utils/handleI18n'
+import { remoteNoticeHandler } from 'apis/app/remoteNotice'
+import { isMacOS } from '../utils/getMacOSVersion'
+import { isWindowShouldShowOnStartup } from '../apis/app/window/windowList'
 
 const isDevelopment = process.env.NODE_ENV !== 'production'
 
@@ -58,9 +61,10 @@ const handleStartUpFiles = (argv: string[], cwd: string) => {
 class LifeCycle {
   private async beforeReady () {
     protocol.registerSchemesAsPrivileged([{ scheme: 'picgo', privileges: { secure: true, standard: true } }])
-    // fix the $PATH in macOS
+    // fix the $PATH in macOS & linux
     fixPath()
     beforeOpen()
+    initI18n()
     ipcList.listen()
     busEventList.listen()
     updateShortKeyFromVersion212(db, db.get('settings.shortKey'))
@@ -76,16 +80,27 @@ class LifeCycle {
         try {
           await installExtension(VUEJS_DEVTOOLS)
         } catch (e: any) {
-          console.error('Vue Devtools failed to install:', e.toString())
+          console.error('Vue Devtools failed to install:', e?.toString())
         }
       }
-      const res = await privacyManager.init()
-      if (!res) {
-        return app.quit()
-      }
       windowManager.create(IWindowList.TRAY_WINDOW)
-      windowManager.create(IWindowList.SETTING_WINDOW)
+      const settingWindow = windowManager.create(IWindowList.SETTING_WINDOW)
+      settingWindow?.once('show', () => {
+        remoteNoticeHandler.triggerHook(IRemoteNoticeTriggerHook.SETTING_WINDOW_OPEN)
+      })
+      if (isWindowShouldShowOnStartup(IWindowList.SETTING_WINDOW)) {
+        settingWindow?.show()
+        settingWindow?.focus()
+      }
+      if (!isMacOS) {
+        if (isWindowShouldShowOnStartup(IWindowList.MINI_WINDOW)) {
+          const miniWindow = windowManager.create(IWindowList.MINI_WINDOW)
+          miniWindow?.show()
+          miniWindow?.focus()
+        }
+      }
       createTray()
+      handleDockIcon()
       db.set('needReload', false)
       updateChecker()
       // 不需要阻塞
@@ -104,12 +119,10 @@ class LifeCycle {
           notice.show()
         }
       }
+      await remoteNoticeHandler.init()
+      remoteNoticeHandler.triggerHook(IRemoteNoticeTriggerHook.APP_START)
     }
-    if (!app.isReady()) {
-      app.on('ready', readyFunction)
-    } else {
-      readyFunction()
-    }
+    app.whenReady().then(readyFunction)
   }
 
   private onRunning () {
@@ -133,6 +146,13 @@ class LifeCycle {
       }
       if (!windowManager.has(IWindowList.SETTING_WINDOW)) {
         windowManager.create(IWindowList.SETTING_WINDOW)
+      }
+      // click dock to open setting window
+      if (isMacOS) {
+        handleDockIcon()
+        if (db.get('settings.showDockIcon') !== false) {
+          windowManager.get(IWindowList.SETTING_WINDOW)?.show()
+        }
       }
     })
     app.setLoginItemSettings({

@@ -1,47 +1,35 @@
+import fs from 'fs-extra'
 import {
   app,
   Menu,
   Tray,
   dialog,
   clipboard,
-  systemPreferences,
-  Notification
+  Notification,
+  nativeTheme
 } from 'electron'
 import uploader from 'apis/app/uploader'
-import getPicBeds from '~/main/utils/getPicBeds'
 import db, { GalleryDB } from '~/main/apis/core/datastore'
 import windowManager from 'apis/app/window/windowManager'
-import { IWindowList } from 'apis/app/window/constants'
-import picgo from '@core/picgo'
+import { IWindowList } from '#/types/enum'
 import pasteTemplate from '~/main/utils/pasteTemplate'
 import pkg from 'root/package.json'
-import { handleCopyUrl } from '~/main/utils/common'
+import { ensureFilePath, handleCopyUrl } from '~/main/utils/common'
 import { privacyManager } from '~/main/utils/privacyManager'
+import { T } from '~/main/i18n'
+import { isMacOSVersionGreaterThanOrEqualTo } from '~/main/utils/getMacOSVersion'
+import { buildPicBedListMenu } from '~/main/events/remotes/menu'
+import { isLinux, isMacOS } from '~/universal/utils/common'
 let contextMenu: Menu | null
 let menu: Menu | null
 let tray: Tray | null
+// need to build new menu
 export function createContextMenu () {
-  const picBeds = getPicBeds()
   if (process.platform === 'darwin' || process.platform === 'win32') {
-    const submenu = picBeds.filter(item => item.visible).map(item => {
-      return {
-        label: item.name,
-        type: 'radio',
-        checked: db.get('picBed.current') === item.type,
-        click () {
-          picgo.saveConfig({
-            'picBed.current': item.type,
-            'picBed.uploader': item.type
-          })
-          if (windowManager.has(IWindowList.SETTING_WINDOW)) {
-            windowManager.get(IWindowList.SETTING_WINDOW)!.webContents.send('syncPicBed')
-          }
-        }
-      }
-    })
+    const submenu = buildPicBedListMenu()
     contextMenu = Menu.buildFromTemplate([
       {
-        label: '关于',
+        label: T('ABOUT'),
         click () {
           dialog.showMessageBox({
             title: 'PicGo',
@@ -51,7 +39,7 @@ export function createContextMenu () {
         }
       },
       {
-        label: '打开详细窗口',
+        label: T('OPEN_MAIN_WINDOW'),
         click () {
           const settingWindow = windowManager.get(IWindowList.SETTING_WINDOW)
           settingWindow!.show()
@@ -62,14 +50,14 @@ export function createContextMenu () {
         }
       },
       {
-        label: '选择默认图床',
+        label: T('CHOOSE_DEFAULT_PICBED'),
         type: 'submenu',
         // @ts-ignore
         submenu
       },
       // @ts-ignore
       {
-        label: '打开更新助手',
+        label: T('OPEN_UPDATE_HELPER'),
         type: 'checkbox',
         checked: db.get('settings.showUpdateTip'),
         click () {
@@ -78,13 +66,13 @@ export function createContextMenu () {
         }
       },
       {
-        label: '隐私协议',
+        label: T('PRIVACY_AGREEMENT'),
         click () {
           privacyManager.show(false)
         }
       },
       {
-        label: '重启应用',
+        label: T('RELOAD_APP'),
         click () {
           app.relaunch()
           app.exit(0)
@@ -93,7 +81,7 @@ export function createContextMenu () {
       // @ts-ignore
       {
         role: 'quit',
-        label: '退出'
+        label: T('QUIT')
       }
     ])
   } else if (process.platform === 'linux') {
@@ -106,7 +94,7 @@ export function createContextMenu () {
 
     contextMenu = Menu.buildFromTemplate([
       {
-        label: '打开详细窗口',
+        label: T('OPEN_MAIN_WINDOW'),
         click () {
           const settingWindow = windowManager.get(IWindowList.SETTING_WINDOW)
           settingWindow!.show()
@@ -118,7 +106,7 @@ export function createContextMenu () {
       },
       // @ts-ignore
       {
-        label: '打开更新助手',
+        label: T('OPEN_UPDATE_HELPER'),
         type: 'checkbox',
         checked: db.get('settings.showUpdateTip'),
         click () {
@@ -127,7 +115,7 @@ export function createContextMenu () {
         }
       },
       {
-        label: '关于应用',
+        label: T('ABOUT'),
         click () {
           dialog.showMessageBox({
             title: 'PicGo',
@@ -140,14 +128,26 @@ export function createContextMenu () {
       // @ts-ignore
       {
         role: 'quit',
-        label: '退出'
+        label: T('QUIT')
       }
     ])
+  }
+  return contextMenu!
+}
+
+const getTrayIcon = () => {
+  if (process.platform === 'darwin') {
+    const isMacOSGreaterThan11 = isMacOSVersionGreaterThanOrEqualTo('11')
+    return isMacOSGreaterThan11
+      ? `${__static}/menubar-newdarwinTemplate.png`
+      : `${__static}/menubar.png`
+  } else {
+    return `${__static}/menubar-nodarwin.png`
   }
 }
 
 export function createTray () {
-  const menubarPic = process.platform === 'darwin' ? `${__static}/menubar.png` : `${__static}/menubar-nodarwin.png`
+  const menubarPic = getTrayIcon()
   tray = new Tray(menubarPic)
   // click事件在Mac和Windows上可以触发（在Ubuntu上无法触发，Unity不支持）
   if (process.platform === 'darwin' || process.platform === 'win32') {
@@ -156,25 +156,51 @@ export function createTray () {
         windowManager.get(IWindowList.TRAY_WINDOW)!.hide()
       }
       createContextMenu()
-      tray!.popUpContextMenu(contextMenu!)
+      setTimeout(() => {
+        tray!.popUpContextMenu(contextMenu!)
+      }, 0)
     })
     tray.on('click', (event, bounds) => {
       if (process.platform === 'darwin') {
         toggleWindow(bounds)
-        setTimeout(() => {
+        setTimeout(async () => {
           const img = clipboard.readImage()
           const obj: ImgInfo[] = []
           if (!img.isEmpty()) {
             // 从剪贴板来的图片默认转为png
-            // @ts-ignore
-            const imgUrl = 'data:image/png;base64,' + Buffer.from(img.toPNG(), 'binary').toString('base64')
-            obj.push({
-              width: img.getSize().width,
-              height: img.getSize().height,
-              imgUrl
-            })
+            // https://github.com/electron/electron/issues/9035
+            const imgPath = clipboard.read('public.file-url')
+            if (imgPath) {
+              const decodePath = ensureFilePath(imgPath)
+              if (decodePath === imgPath) {
+                obj.push({
+                  imgUrl: imgPath
+                })
+              } else {
+                if (decodePath !== '') {
+                  // 带有中文的路径，无法直接被img.src所使用，会被转义
+                  const base64 = await fs.readFile(
+                    decodePath.replace('file://', ''),
+                    { encoding: 'base64' }
+                  )
+                  obj.push({
+                    imgUrl: `data:image/png;base64,${base64}`
+                  })
+                }
+              }
+            } else {
+              const imgUrl = img.toDataURL()
+              // console.log(imgUrl)
+              obj.push({
+                width: img.getSize().width,
+                height: img.getSize().height,
+                imgUrl
+              })
+            }
           }
-          windowManager.get(IWindowList.TRAY_WINDOW)!.webContents.send('clipboardFiles', obj)
+          windowManager
+            .get(IWindowList.TRAY_WINDOW)!
+            .webContents.send('clipboardFiles', obj)
         }, 0)
       } else {
         if (windowManager.has(IWindowList.TRAY_WINDOW)) {
@@ -190,7 +216,7 @@ export function createTray () {
     })
 
     tray.on('drag-enter', () => {
-      if (systemPreferences.isDarkMode()) {
+      if (nativeTheme.shouldUseDarkColors) {
         tray!.setImage(`${__static}/upload-dark.png`)
       } else {
         tray!.setImage(`${__static}/upload.png`)
@@ -198,7 +224,8 @@ export function createTray () {
     })
 
     tray.on('drag-end', () => {
-      tray!.setImage(`${__static}/menubar.png`)
+      const menubarPic = getTrayIcon()
+      tray!.setImage(menubarPic)
     })
 
     // drop-files only be supported in macOS
@@ -212,11 +239,13 @@ export function createTray () {
       if (imgs !== false) {
         const pasteText: string[] = []
         for (let i = 0; i < imgs.length; i++) {
-          pasteText.push(pasteTemplate(pasteStyle, imgs[i], db.get('settings.customLink')))
+          pasteText.push(
+            pasteTemplate(pasteStyle, imgs[i], db.get('settings.customLink'))
+          )
           const notification = new Notification({
-            title: '上传成功',
-            body: imgs[i].imgUrl!,
-            icon: files[i]
+            title: T('UPLOAD_SUCCEED'),
+            body: imgs[i].imgUrl!
+            // icon: files[i]
           })
           setTimeout(() => {
             notification.show()
@@ -228,35 +257,59 @@ export function createTray () {
       }
     })
     // toggleWindow()
-  } else if (process.platform === 'linux') {
-  // click事件在Ubuntu上无法触发，Unity不支持（在Mac和Windows上可以触发）
-  // 需要使用 setContextMenu 设置菜单
+  } else if (isLinux) {
+    // click事件在Ubuntu上无法触发，Unity不支持（在Mac和Windows上可以触发）
+    // 需要使用 setContextMenu 设置菜单
     createContextMenu()
     tray!.setContextMenu(contextMenu)
   }
 }
 
+export function handleDockIcon () {
+  if (isMacOS) {
+    if (db.get('settings.showDockIcon') !== false) {
+      app.dock.show()
+      app.dock.setMenu(createContextMenu())
+    } else {
+      app.dock.hide()
+    }
+  }
+}
+
 export function createMenu () {
+  if (menu) {
+    return menu
+  }
   if (process.env.NODE_ENV !== 'development') {
-    const template = [{
-      label: 'Edit',
-      submenu: [
-        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', selector: 'undo:' },
-        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', selector: 'redo:' },
-        { type: 'separator' },
-        { label: 'Cut', accelerator: 'CmdOrCtrl+X', selector: 'cut:' },
-        { label: 'Copy', accelerator: 'CmdOrCtrl+C', selector: 'copy:' },
-        { label: 'Paste', accelerator: 'CmdOrCtrl+V', selector: 'paste:' },
-        { label: 'Select All', accelerator: 'CmdOrCtrl+A', selector: 'selectAll:' },
-        {
-          label: 'Quit',
-          accelerator: 'CmdOrCtrl+Q',
-          click () {
-            app.quit()
+    const template = [
+      {
+        label: 'Edit',
+        submenu: [
+          { label: 'Undo', accelerator: 'CmdOrCtrl+Z', selector: 'undo:' },
+          {
+            label: 'Redo',
+            accelerator: 'Shift+CmdOrCtrl+Z',
+            selector: 'redo:'
+          },
+          { type: 'separator' },
+          { label: 'Cut', accelerator: 'CmdOrCtrl+X', selector: 'cut:' },
+          { label: 'Copy', accelerator: 'CmdOrCtrl+C', selector: 'copy:' },
+          { label: 'Paste', accelerator: 'CmdOrCtrl+V', selector: 'paste:' },
+          {
+            label: 'Select All',
+            accelerator: 'CmdOrCtrl+A',
+            selector: 'selectAll:'
+          },
+          {
+            label: 'Quit',
+            accelerator: 'CmdOrCtrl+Q',
+            click () {
+              app.quit()
+            }
           }
-        }
-      ]
-    }]
+        ]
+      }
+    ]
     // @ts-ignore
     menu = Menu.buildFromTemplate(template)
     Menu.setApplicationMenu(menu)

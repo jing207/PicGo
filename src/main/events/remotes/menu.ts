@@ -1,5 +1,5 @@
 import windowManager from 'apis/app/window/windowManager'
-import { IWindowList } from 'apis/app/window/constants'
+import { IWindowList } from '#/types/enum'
 import { Menu, BrowserWindow, app, dialog } from 'electron'
 import getPicBeds from '~/main/utils/getPicBeds'
 import picgo from '@core/picgo'
@@ -9,9 +9,11 @@ import {
 import { privacyManager } from '~/main/utils/privacyManager'
 import pkg from 'root/package.json'
 import GuiApi from 'apis/gui'
-import PicGoCore from '~/universal/types/picgo'
-import { PICGO_CONFIG_PLUGIN, PICGO_HANDLE_PLUGIN_ING, PICGO_TOGGLE_PLUGIN } from '~/universal/events/constants'
+import { PICGO_CONFIG_PLUGIN, PICGO_HANDLE_PLUGIN_DONE, PICGO_HANDLE_PLUGIN_ING, PICGO_TOGGLE_PLUGIN, SHOW_MAIN_PAGE_DONATION, SHOW_MAIN_PAGE_QRCODE } from '~/universal/events/constants'
 import picgoCoreIPC from '~/main/events/picgoCoreIPC'
+import { PicGo as PicGoCore } from 'picgo'
+import { T } from '~/main/i18n'
+import { changeCurrentUploader } from '~/main/utils/handleUploaderConfig'
 
 interface GuiMenuItem {
   label: string
@@ -19,27 +21,10 @@ interface GuiMenuItem {
 }
 
 const buildMiniPageMenu = () => {
-  const picBeds = getPicBeds()
-  const current = picgo.getConfig('picBed.uploader')
-  const submenu = picBeds.filter(item => item.visible).map(item => {
-    return {
-      label: item.name,
-      type: 'radio',
-      checked: current === item.type,
-      click () {
-        picgo.saveConfig({
-          'picBed.current': item.type,
-          'picBed.uploader': item.type
-        })
-        if (windowManager.has(IWindowList.SETTING_WINDOW)) {
-          windowManager.get(IWindowList.SETTING_WINDOW)!.webContents.send('syncPicBed')
-        }
-      }
-    }
-  })
+  const submenu = buildPicBedListMenu()
   const template = [
     {
-      label: '打开详细窗口',
+      label: T('OPEN_MAIN_WINDOW'),
       click () {
         windowManager.get(IWindowList.SETTING_WINDOW)!.show()
         if (windowManager.has(IWindowList.MINI_WINDOW)) {
@@ -48,30 +33,30 @@ const buildMiniPageMenu = () => {
       }
     },
     {
-      label: '选择默认图床',
+      label: T('CHOOSE_DEFAULT_PICBED'),
       type: 'submenu',
       submenu
     },
     {
-      label: '剪贴板图片上传',
+      label: T('UPLOAD_BY_CLIPBOARD'),
       click () {
         uploadClipboardFiles()
       }
     },
     {
-      label: '隐藏窗口',
+      label: T('HIDE_WINDOW'),
       click () {
         BrowserWindow.getFocusedWindow()!.hide()
       }
     },
     {
-      label: '隐私协议',
+      label: T('PRIVACY_AGREEMENT'),
       click () {
         privacyManager.show(false)
       }
     },
     {
-      label: '重启应用',
+      label: T('RELOAD_APP'),
       click () {
         app.relaunch()
         app.exit(0)
@@ -79,17 +64,17 @@ const buildMiniPageMenu = () => {
     },
     {
       role: 'quit',
-      label: '退出'
+      label: T('QUIT')
     }
   ]
   // @ts-ignore
   return Menu.buildFromTemplate(template)
 }
 
-const buildMainPageMenu = () => {
+const buildMainPageMenu = (win: BrowserWindow) => {
   const template = [
     {
-      label: '关于',
+      label: T('ABOUT'),
       click () {
         dialog.showMessageBox({
           title: 'PicGo',
@@ -99,20 +84,32 @@ const buildMainPageMenu = () => {
       }
     },
     {
-      label: '赞助PicGo',
+      label: T('SPONSOR_PICGO'),
       click () {
-        // TODO: show donation
+        win?.webContents?.send(SHOW_MAIN_PAGE_DONATION)
       }
     },
     {
-      label: '生成图床配置二维码',
+      label: T('SHOW_PICBED_QRCODE'),
       click () {
-        // TODO: qrcode
-        // _this.qrcodeVisible = true
+        win?.webContents?.send(SHOW_MAIN_PAGE_QRCODE)
       }
     },
     {
-      label: '隐私协议',
+      label: T('OPEN_TOOLBOX'),
+      click () {
+        const window = windowManager.create(IWindowList.TOOLBOX_WINDOW)
+        window?.show()
+      }
+    },
+    {
+      label: T('SHOW_DEVTOOLS'),
+      click () {
+        win?.webContents?.openDevTools()
+      }
+    },
+    {
+      label: T('PRIVACY_AGREEMENT'),
       click () {
         privacyManager.show(false)
       }
@@ -122,25 +119,57 @@ const buildMainPageMenu = () => {
   return Menu.buildFromTemplate(template)
 }
 
-const buildUploadPageMenu = () => {
+const buildPicBedListMenu = () => {
   const picBeds = getPicBeds()
   const currentPicBed = picgo.getConfig('picBed.uploader')
-  const submenu = picBeds.filter(item => item.visible).map(item => {
+  const currentPicBedName = picBeds.find(item => item.type === currentPicBed)?.name
+  const picBedConfigList = picgo.getConfig<IUploaderConfig>('uploader')
+  const currentPicBedMenuItem = [{
+    label: `${T('CURRENT_PICBED')} - ${currentPicBedName}`,
+    enabled: false
+  }, {
+    type: 'separator'
+  }]
+  let submenu = picBeds.filter(item => item.visible).map(item => {
+    const configList = picBedConfigList?.[item.type]?.configList
+    const defaultId = picBedConfigList?.[item.type]?.defaultId
+    const hasSubmenu = !!configList
     return {
       label: item.name,
-      type: 'radio',
-      checked: currentPicBed === item.type,
-      click () {
-        picgo.saveConfig({
-          'picBed.current': item.type,
-          'picBed.uploader': item.type
+      type: !hasSubmenu ? 'checkbox' : undefined,
+      checked: !hasSubmenu ? (currentPicBed === item.type) : undefined,
+      submenu: hasSubmenu
+        ? configList.map((config) => {
+          return {
+            label: config._configName || 'Default',
+            // if only one config, use checkbox, or radio will checked as default
+            // see: https://github.com/electron/electron/issues/21292
+            type: 'checkbox',
+            checked: config._id === defaultId && (item.type === currentPicBed),
+            click: function () {
+              changeCurrentUploader(item.type, config, config._id)
+              if (windowManager.has(IWindowList.SETTING_WINDOW)) {
+                windowManager.get(IWindowList.SETTING_WINDOW)!.webContents.send('syncPicBed')
+              }
+            }
+          }
         })
-        if (windowManager.has(IWindowList.SETTING_WINDOW)) {
-          windowManager.get(IWindowList.SETTING_WINDOW)!.webContents.send('syncPicBed')
+        : undefined,
+      click: !hasSubmenu
+        ? function () {
+          picgo.saveConfig({
+            'picBed.current': item.type,
+            'picBed.uploader': item.type
+          })
+          if (windowManager.has(IWindowList.SETTING_WINDOW)) {
+            windowManager.get(IWindowList.SETTING_WINDOW)!.webContents.send('syncPicBed')
+          }
         }
-      }
+        : undefined
     }
   })
+  // @ts-ignore
+  submenu = currentPicBedMenuItem.concat(submenu)
   // @ts-ignore
   return Menu.buildFromTemplate(submenu)
 }
@@ -169,7 +198,7 @@ const handleRestoreState = (item: string, name: string): void => {
 
 const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
   const menu = [{
-    label: '启用插件',
+    label: T('ENABLE_PLUGIN'),
     enabled: !plugin.enabled,
     click () {
       picgo.saveConfig({
@@ -179,7 +208,7 @@ const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
       window.webContents.send(PICGO_TOGGLE_PLUGIN, plugin.fullName, true)
     }
   }, {
-    label: '禁用插件',
+    label: T('DISABLE_PLUGIN'),
     enabled: plugin.enabled,
     click () {
       picgo.saveConfig({
@@ -188,6 +217,7 @@ const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
       const window = windowManager.get(IWindowList.SETTING_WINDOW)!
       window.webContents.send(PICGO_HANDLE_PLUGIN_ING, plugin.fullName)
       window.webContents.send(PICGO_TOGGLE_PLUGIN, plugin.fullName, false)
+      window.webContents.send(PICGO_HANDLE_PLUGIN_DONE, plugin.fullName)
       if (plugin.config.transformer.name) {
         handleRestoreState('transformer', plugin.config.transformer.name)
       }
@@ -196,14 +226,14 @@ const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
       }
     }
   }, {
-    label: '卸载插件',
+    label: T('UNINSTALL_PLUGIN'),
     click () {
       const window = windowManager.get(IWindowList.SETTING_WINDOW)!
       window.webContents.send(PICGO_HANDLE_PLUGIN_ING, plugin.fullName)
       picgoCoreIPC.handlePluginUninstall(plugin.fullName)
     }
   }, {
-    label: '更新插件',
+    label: T('UPDATE_PLUGIN'),
     click () {
       const window = windowManager.get(IWindowList.SETTING_WINDOW)!
       window.webContents.send(PICGO_HANDLE_PLUGIN_ING, plugin.fullName)
@@ -213,7 +243,9 @@ const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
   for (const i in plugin.config) {
     if (plugin.config[i].config.length > 0) {
       const obj = {
-        label: `配置${i} - ${plugin.config[i].fullName || plugin.config[i].name}`,
+        label: T('CONFIG_THING', {
+          c: `${i} - ${plugin.config[i].fullName || plugin.config[i].name}`
+        }),
         click () {
           const window = windowManager.get(IWindowList.SETTING_WINDOW)!
           const currentType = i
@@ -231,7 +263,7 @@ const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
     const currentTransformer = picgo.getConfig<string>('picBed.transformer') || 'path'
     const pluginTransformer = plugin.config.transformer.name
     const obj = {
-      label: `${currentTransformer === pluginTransformer ? '禁用' : '启用'}transformer - ${plugin.config.transformer.name}`,
+      label: `${currentTransformer === pluginTransformer ? T('DISABLE') : T('ENABLE')}transformer - ${plugin.config.transformer.name}`,
       click () {
         const transformer = plugin.config.transformer.name
         const currentTransformer = picgo.getConfig<string>('picBed.transformer') || 'path'
@@ -281,6 +313,6 @@ const buildPluginPageMenu = (plugin: IPicGoPlugin) => {
 export {
   buildMiniPageMenu,
   buildMainPageMenu,
-  buildUploadPageMenu,
+  buildPicBedListMenu,
   buildPluginPageMenu
 }

@@ -1,180 +1,203 @@
 <template>
   <div id="shortcut-page">
     <div class="view-title">
-      快捷键设置
+      {{ $T('SETTINGS_SET_SHORTCUT') }}
     </div>
     <el-row>
-      <el-col :span="20" :offset="2">
+      <el-col
+        :span="20"
+        :offset="2"
+      >
         <el-table
+          class="shortcut-page-table-border"
           :data="list"
-          size="mini"
+          size="small"
+          header-cell-class-name="shortcut-page-table-border"
+          cell-class-name="shortcut-page-table-border"
         >
           <el-table-column
-            label="快捷键名称"
+            :label="$T('SHORTCUT_NAME')"
           >
-            <template slot-scope="scope">
+            <template #default="scope">
               {{ scope.row.label ? scope.row.label : scope.row.name }}
             </template>
           </el-table-column>
           <el-table-column
             width="160px"
-            label="快捷键绑定"
+            :label="$T('SHORTCUT_BIND')"
             prop="key"
-          >
-          </el-table-column>
+          />
           <el-table-column
-            label="状态"
+            :label="$T('SHORTCUT_STATUS')"
           >
-            <template slot-scope="scope">
+            <template #default="scope">
               <el-tag
-                size="mini"
+                size="small"
                 :type="scope.row.enable ? 'success' : 'danger'"
               >
-                {{ scope.row.enable ? '已启用' : '已禁用' }}
+                {{ scope.row.enable ? $T('SHORTCUT_ENABLED') : $T('SHORTCUT_DISABLED') }}
               </el-tag>
             </template>
           </el-table-column>
           <el-table-column
-            label="来源"
+            :label="$T('SHORTCUT_SOURCE')"
             width="100px"
           >
-            <template slot-scope="scope">
+            <template #default="scope">
               {{ calcOriginShowName(scope.row.from) }}
             </template>
           </el-table-column>
           <el-table-column
-            label="操作"
+            :label="$T('SHORTCUT_HANDLE')"
+            width="100px"
           >
-            <template slot-scope="scope">
-              <el-button
-                @click="toggleEnable(scope.row)"
-                size="mini"
-                :class="{
-                  disabled: scope.row.enable
-                }"
-                type="text">
-                {{ scope.row.enable ? '禁用' : '启用' }}
-              </el-button>
-              <el-button
-                class="edit"
-                size="mini"
-                @click="openKeyBindingDialog(scope.row, scope.$index)"
-                type="text">
-                编辑
-              </el-button>
+            <template #default="scope">
+              <el-row>
+                <el-button
+                  size="small"
+                  :class="{
+                    disabled: scope.row.enable
+                  }"
+                  type="text"
+                  @click="toggleEnable(scope.row)"
+                >
+                  {{ scope.row.enable ? $T('SHORTCUT_DISABLE') : $T('SHORTCUT_ENABLE') }}
+                </el-button>
+                <el-button
+                  class="edit"
+                  size="small"
+                  type="text"
+                  @click="openKeyBindingDialog(scope.row, scope.$index)"
+                >
+                  {{ $T('SHORTCUT_EDIT') }}
+                </el-button>
+              </el-row>
             </template>
           </el-table-column>
         </el-table>
       </el-col>
     </el-row>
     <el-dialog
-      title="修改上传快捷键"
-      :visible.sync="keyBindingVisible"
+      v-model="keyBindingVisible"
+      :title="$T('SHORTCUT_CHANGE_UPLOAD')"
       :modal-append-to-body="false"
     >
       <el-form
         label-position="top"
         label-width="80px"
       >
-        <el-form-item
-          label="快捷上传"
-        >
+        <el-form-item>
           <el-input
-            class="align-center"
-            @keydown.native.prevent="keyDetect($event)"
             v-model="shortKey"
+            class="align-center"
             :autofocus="true"
-          ></el-input>
+            @keydown.prevent="keyDetect($event as KeyboardEvent)"
+          />
         </el-form-item>
       </el-form>
-      <span slot="footer">
-        <el-button @click="cancelKeyBinding" round>取消</el-button>
-        <el-button type="primary" @click="confirmKeyBinding" round>确定</el-button>
-      </span>
+      <template #footer>
+        <el-button
+          round
+          @click="cancelKeyBinding"
+        >
+          {{ $T('CANCEL') }}
+        </el-button>
+        <el-button
+          type="primary"
+          round
+          @click="confirmKeyBinding"
+        >
+          {{ $T('CONFIRM') }}
+        </el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
-<script lang="ts">
-import { Component, Vue, Watch } from 'vue-property-decorator'
-import keyDetect from '@/utils/key-binding'
+<script lang="ts" setup>
+import keyBinding from '@/utils/key-binding'
 import { ipcRenderer, IpcRendererEvent } from 'electron'
 import { TOGGLE_SHORTKEY_MODIFIED_MODE } from '#/events/constants'
+import { onBeforeUnmount, onBeforeMount, ref, watch } from 'vue'
+import { getConfig, sendToMain } from '@/utils/dataSender'
+import { T as $T } from '@/i18n/index'
 
-@Component({
-  name: 'shortkey-page'
+const list = ref<IShortKeyConfig[]>([])
+const keyBindingVisible = ref(false)
+const command = ref('')
+const shortKey = ref('')
+const currentIndex = ref(0)
+
+onBeforeMount(async () => {
+  const shortKeyConfig = (await getConfig<IShortKeyConfigs>('settings.shortKey'))!
+  list.value = Object.keys(shortKeyConfig).map(item => {
+    return {
+      ...shortKeyConfig[item],
+      from: calcOrigin(item)
+    }
+  })
 })
-export default class extends Vue {
-  list: IShortKeyConfig[] = []
-  keyBindingVisible = false
-  command = ''
-  shortKey = ''
-  currentIndex = 0
-  async created () {
-    const shortKeyConfig = (await this.getConfig<IShortKeyConfigs>('settings.shortKey'))!
-    this.list = Object.keys(shortKeyConfig).map(item => {
-      return {
-        ...shortKeyConfig[item],
-        from: this.calcOrigin(item)
-      }
-    })
-  }
 
-  @Watch('keyBindingVisible')
-  onKeyBindingVisibleChange (val: boolean) {
-    ipcRenderer.send(TOGGLE_SHORTKEY_MODIFIED_MODE, val)
-  }
+watch(keyBindingVisible, (val: boolean) => {
+  sendToMain(TOGGLE_SHORTKEY_MODIFIED_MODE, val)
+})
 
-  calcOrigin (item: string) {
-    const [origin] = item.split(':')
-    return origin
-  }
+function calcOrigin (item: string) {
+  const [origin] = item.split(':')
+  return origin
+}
 
-  calcOriginShowName (item: string) {
-    return item.replace('picgo-plugin-', '')
-  }
+function calcOriginShowName (item: string) {
+  return item.replace('picgo-plugin-', '')
+}
 
-  toggleEnable (item: IShortKeyConfig) {
-    const status = !item.enable
-    item.enable = status
-    ipcRenderer.send('bindOrUnbindShortKey', item, item.from)
-  }
+function toggleEnable (item: IShortKeyConfig) {
+  const status = !item.enable
+  item.enable = status
+  sendToMain('bindOrUnbindShortKey', item, item.from)
+}
 
-  keyDetect (event: KeyboardEvent) {
-    this.shortKey = keyDetect(event).join('+')
-  }
+function keyDetect (event: KeyboardEvent) {
+  shortKey.value = keyBinding(event).join('+')
+}
 
-  async openKeyBindingDialog (config: IShortKeyConfig, index: number) {
-    this.command = `${config.from}:${config.name}`
-    this.shortKey = await this.getConfig(`settings.shortKey.${this.command}.key`) || ''
-    this.currentIndex = index
-    this.keyBindingVisible = true
-  }
+async function openKeyBindingDialog (config: IShortKeyConfig, index: number) {
+  command.value = `${config.from}:${config.name}`
+  shortKey.value = await getConfig(`settings.shortKey.${command.value}.key`) || ''
+  currentIndex.value = index
+  keyBindingVisible.value = true
+}
 
-  async cancelKeyBinding () {
-    this.keyBindingVisible = false
-    this.shortKey = await this.getConfig<string>(`settings.shortKey.${this.command}.key`) || ''
-  }
+async function cancelKeyBinding () {
+  keyBindingVisible.value = false
+  shortKey.value = await getConfig<string>(`settings.shortKey.${command.value}.key`) || ''
+}
 
-  async confirmKeyBinding () {
-    const oldKey = await this.getConfig<string>(`settings.shortKey.${this.command}.key`)
-    const config = Object.assign({}, this.list[this.currentIndex])
-    config.key = this.shortKey
-    ipcRenderer.send('updateShortKey', config, oldKey, config.from)
-    ipcRenderer.once('updateShortKeyResponse', (evt: IpcRendererEvent, result) => {
-      if (result) {
-        this.keyBindingVisible = false
-        this.list[this.currentIndex].key = this.shortKey
-      }
-    })
-  }
+async function confirmKeyBinding () {
+  const oldKey = await getConfig<string>(`settings.shortKey.${command.value}.key`)
+  const config = Object.assign({}, list.value[currentIndex.value])
+  config.key = shortKey.value
+  sendToMain('updateShortKey', config, oldKey, config.from)
+  ipcRenderer.once('updateShortKeyResponse', (evt: IpcRendererEvent, result) => {
+    if (result) {
+      keyBindingVisible.value = false
+      list.value[currentIndex.value].key = shortKey.value
+    }
+  })
+}
 
-  beforeDestroy () {
-    ipcRenderer.send(TOGGLE_SHORTKEY_MODIFIED_MODE, false)
-  }
+onBeforeUnmount(() => {
+  sendToMain(TOGGLE_SHORTKEY_MODIFIED_MODE, false)
+})
+</script>
+<script lang="ts">
+export default {
+  name: 'ShortkeyPage'
 }
 </script>
 <style lang='stylus'>
 #shortcut-page
+  .shortcut-page-table-border
+    border-color darken(#eee, 50%)
   .el-dialog__body
     padding 10px 20px
     .el-form-item
@@ -184,9 +207,14 @@ export default class extends Vue {
       color: #F56C6C
     &.edit
       color: #67C23A
+    &--text
+      padding-left 4px
+      padding-right 4px
   .el-table
     background-color: transparent
     color #ddd
+    &::before
+      background-color darken(#eee, 50%)
     thead
       color #bbb
     th,tr
@@ -200,4 +228,6 @@ export default class extends Vue {
         tr:hover
           &>td
             background #333
+  .el-button+.el-button
+    margin-left 4px
 </style>

@@ -3,8 +3,6 @@ function resolve (dir) {
   return path.join(__dirname, dir)
 }
 
-const arch = process.argv.includes('--ia32') ? 'ia32' : 'x64'
-
 const config = {
   configureWebpack: {
     devtool: 'nosources-source-map'
@@ -34,6 +32,10 @@ const config = {
           .set('#', resolve('src/universal'))
           .set('apis', resolve('src/main/apis'))
           .set('@core', resolve('src/main/apis/core'))
+        config.resolve.mainFields
+          .clear()
+          .add('main') // fix some modules will use browser target
+          .add('module')
       },
       builderOptions: {
         productName: 'PicGo',
@@ -64,24 +66,35 @@ const config = {
         mac: {
           icon: 'build/icons/icon.icns',
           extendInfo: {
-            LSUIElement: 1
-          }
+            LSUIElement: 0
+          },
+          target: [{
+            target: 'dmg',
+            arch: [
+              'x64',
+              'arm64'
+            ]
+          }],
+          // eslint-disable-next-line no-template-curly-in-string
+          artifactName: 'PicGo-${version}-${arch}.dmg'
         },
         win: {
           icon: 'build/icons/icon.ico',
           // eslint-disable-next-line no-template-curly-in-string
-          artifactName: `PicGo Setup \${version}-${arch}.exe`,
+          artifactName: 'PicGo-Setup-${version}-${arch}.exe',
           target: [{
             target: 'nsis',
             arch: [
-              arch
+              'x64',
+              'ia32'
             ]
           }]
         },
         nsis: {
           shortcutName: 'PicGo',
           oneClick: false,
-          allowToChangeInstallationDirectory: true
+          allowToChangeInstallationDirectory: true,
+          include: 'build/installer.nsh'
         },
         linux: {
           icon: 'build/icons/'

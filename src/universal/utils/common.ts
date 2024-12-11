@@ -5,7 +5,7 @@ export const isUrlEncode = (url: string): boolean => {
     return url !== decodeURI(url)
   } catch (e) {
     // if some error caught, try to let it go
-    return true
+    return false
   }
 }
 
@@ -30,3 +30,28 @@ export const handleStreamlinePluginName = (name: string) => {
     return name.replace(/picgo-plugin-/, '')
   }
 }
+
+/**
+ * for just simple clone an object
+ */
+export const simpleClone = (obj: any) => {
+  return JSON.parse(JSON.stringify(obj))
+}
+
+export const enforceNumber = (num: number | string) => {
+  return isNaN(Number(num)) ? 0 : Number(num)
+}
+
+export const isDev = process.env.NODE_ENV === 'development'
+
+export const trimValues = (obj: IStringKeyMap) => {
+  const newObj = {} as IStringKeyMap
+  Object.keys(obj).forEach(key => {
+    newObj[key] = typeof obj[key] === 'string' ? obj[key].trim() : obj[key]
+  })
+  return newObj
+}
+
+export const isMacOS = process.platform === 'darwin'
+export const isWindows = process.platform === 'win32'
+export const isLinux = process.platform === 'linux'

@@ -7,14 +7,12 @@ import {
   ipcMain,
   clipboard
 } from 'electron'
-import PicGoCore from '~/universal/types/picgo'
-import { IPasteStyle, IPicGoHelperType } from '#/types/enum'
+import { IPasteStyle, IPicGoHelperType, IWindowList } from '#/types/enum'
 import shortKeyHandler from 'apis/app/shortKey/shortKeyHandler'
 import picgo from '@core/picgo'
-import { handleStreamlinePluginName } from '~/universal/utils/common'
-import { IGuiMenuItem } from 'picgo/dist/src/types'
+import { handleStreamlinePluginName, simpleClone } from '~/universal/utils/common'
+import { IGuiMenuItem, PicGo as PicGoCore } from 'picgo'
 import windowManager from 'apis/app/window/windowManager'
-import { IWindowList } from 'apis/app/window/constants'
 import { showNotification } from '~/main/utils/common'
 import { dbPathChecker } from 'apis/core/datastore/dbChecker'
 import {
@@ -27,16 +25,23 @@ import {
   PICGO_GET_BY_ID_DB,
   PICGO_REMOVE_BY_ID_DB,
   PICGO_OPEN_FILE,
-  PASTE_TEXT
+  PASTE_TEXT,
+  OPEN_WINDOW,
+  GET_LANGUAGE_LIST,
+  SET_CURRENT_LANGUAGE,
+  GET_CURRENT_LANGUAGE,
+  GET_PICBED_CONFIG
 } from '#/events/constants'
 
 import { GalleryDB } from 'apis/core/datastore'
 import { IObject, IFilter } from '@picgo/store/dist/types'
 import pasteTemplate from '../utils/pasteTemplate'
+import { i18nManager, T } from '~/main/i18n'
+import { rpcServer } from './rpc'
 
 // eslint-disable-next-line
 const requireFunc = typeof __webpack_require__ === 'function' ? __non_webpack_require__ : require
-// const PluginHandler = requireFunc('picgo/dist/lib/PluginHandler').default
+// const PluginHandler = requireFunc('picgo/lib/PluginHandler').default
 const STORE_PATH = path.dirname(dbPathChecker())
 // const CONFIG_PATH = path.join(STORE_PATH, '/data.json')
 
@@ -82,9 +87,11 @@ const getPluginList = (): IPicGoPlugin[] => {
     const pluginPKG = requireFunc(path.join(pluginPath, 'package.json'))
     const uploaderName = plugin.uploader || ''
     const transformerName = plugin.transformer || ''
-    let menu: IGuiMenuItem[] = []
+    let menu: Omit<IGuiMenuItem, 'handle'>[] = []
     if (plugin.guiMenu) {
-      menu = plugin.guiMenu(picgo)
+      menu = plugin.guiMenu(picgo).map(item => ({
+        label: item.label
+      }))
     }
     let gui = false
     if (pluginPKG.keywords && pluginPKG.keywords.length > 0) {
@@ -127,8 +134,19 @@ const getPluginList = (): IPicGoPlugin[] => {
 
 const handleGetPluginList = () => {
   ipcMain.on('getPluginList', (event: IpcMainEvent) => {
-    const list = getPluginList()
-    event.sender.send('pluginList', list)
+    try {
+      const list = simpleClone(getPluginList())
+      // here can just send JS Object not function
+      // or will cause [Failed to serialize arguments] error
+      event.sender.send('pluginList', list)
+    } catch (e: any) {
+      event.sender.send('pluginList', [])
+      showNotification({
+        title: T('TIPS_GET_PLUGIN_LIST_FAILED'),
+        body: e.message
+      })
+      picgo.log.error(e)
+    }
   })
 }
 
@@ -145,7 +163,7 @@ const handlePluginInstall = () => {
       shortKeyHandler.registerPluginShortKey(res.body[0])
     } else {
       showNotification({
-        title: '插件安装失败',
+        title: T('PLUGIN_INSTALL_FAILED'),
         body: res.body as string
       })
     }
@@ -163,7 +181,7 @@ const handlePluginUninstall = async (fullName: string) => {
     shortKeyHandler.unregisterPluginShortKey(res.body[0])
   } else {
     showNotification({
-      title: '插件卸载失败',
+      title: T('PLUGIN_UNINSTALL_FAILED'),
       body: res.body as string
     })
   }
@@ -179,7 +197,7 @@ const handlePluginUpdate = async (fullName: string) => {
     window.webContents.send('updateSuccess', res.body[0])
   } else {
     showNotification({
-      title: '插件更新失败',
+      title: T('PLUGIN_UPDATE_FAILED'),
       body: res.body as string
     })
   }
@@ -191,8 +209,8 @@ const handleNPMError = (): IDispose => {
   const handler = (msg: string) => {
     if (msg === 'NPM is not installed') {
       dialog.showMessageBox({
-        title: '发生错误',
-        message: '请安装Node.js并重启PicGo再继续操作',
+        title: T('TIPS_ERROR'),
+        message: T('TIPS_INSTALL_NODE_AND_RELOAD_PICGO'),
         buttons: ['Yes']
       }).then((res) => {
         if (res.response === 0) {
@@ -206,13 +224,14 @@ const handleNPMError = (): IDispose => {
 }
 
 const handleGetPicBedConfig = () => {
-  ipcMain.on('getPicBedConfig', (event: IpcMainEvent, type: string) => {
+  ipcMain.on(GET_PICBED_CONFIG, (event: IpcMainEvent, type: string) => {
     const name = picgo.helper.uploader.get(type)?.name || type
     if (picgo.helper.uploader.get(type)?.config) {
-      const config = handleConfigWithFunction(picgo.helper.uploader.get(type)!.config(picgo))
-      event.sender.send('getPicBedConfig', config, name)
+      const _config = picgo.helper.uploader.get(type)!.config!(picgo)
+      const config = handleConfigWithFunction(_config)
+      event.sender.send(GET_PICBED_CONFIG, config, name)
     } else {
-      event.sender.send('getPicBedConfig', [], name)
+      event.sender.send(GET_PICBED_CONFIG, [], name)
     }
   })
 }
@@ -263,15 +282,23 @@ const handleImportLocalPlugin = () => {
     if (filePaths.length > 0) {
       const res = await picgo.pluginHandler.install(filePaths)
       if (res.success) {
-        const list = getPluginList()
-        event.sender.send('pluginList', list)
+        try {
+          const list = simpleClone(getPluginList())
+          event.sender.send('pluginList', list)
+        } catch (e: any) {
+          event.sender.send('pluginList', [])
+          showNotification({
+            title: T('TIPS_GET_PLUGIN_LIST_FAILED'),
+            body: e.message
+          })
+        }
         showNotification({
-          title: '导入插件成功',
+          title: T('PLUGIN_IMPORT_SUCCEED'),
           body: ''
         })
       } else {
         showNotification({
-          title: '导入插件失败',
+          title: T('PLUGIN_IMPORT_FAILED'),
           body: res.body as string
         })
       }
@@ -317,7 +344,7 @@ const handlePicGoGalleryDB = () => {
     event.sender.send(PICGO_REMOVE_BY_ID_DB, res, callbackId)
   })
 
-  ipcMain.handle(PASTE_TEXT, async (item: ImgInfo, copy = true) => {
+  ipcMain.handle(PASTE_TEXT, async (_, item: ImgInfo, copy = true) => {
     const pasteStyle = picgo.getConfig<IPasteStyle>('settings.pasteStyle') || IPasteStyle.MARKDOWN
     const customLink = picgo.getConfig<string>('settings.customLink')
     const txt = pasteTemplate(pasteStyle, item, customLink)
@@ -335,6 +362,45 @@ const handleOpenFile = () => {
   })
 }
 
+const handleOpenWindow = () => {
+  ipcMain.on(OPEN_WINDOW, (event: IpcMainEvent, windowName: IWindowList) => {
+    const window = windowManager.get(windowName)
+    if (window) {
+      window.show()
+    }
+  })
+}
+
+const handleI18n = () => {
+  ipcMain.on(GET_LANGUAGE_LIST, (event: IpcMainEvent) => {
+    event.sender.send(GET_LANGUAGE_LIST, i18nManager.languageList)
+  })
+  ipcMain.on(SET_CURRENT_LANGUAGE, (event: IpcMainEvent, language: string) => {
+    i18nManager.setCurrentLanguage(language)
+    const { lang, locales } = i18nManager.getCurrentLocales()
+    picgo.i18n.setLanguage(lang)
+    if (process.platform === 'darwin') {
+      const trayWindow = windowManager.get(IWindowList.TRAY_WINDOW)
+      trayWindow?.webContents.send(SET_CURRENT_LANGUAGE, lang, locales)
+    }
+    const settingWindow = windowManager.get(IWindowList.SETTING_WINDOW)
+    settingWindow?.webContents.send(SET_CURRENT_LANGUAGE, lang, locales)
+    if (windowManager.has(IWindowList.MINI_WINDOW)) {
+      const miniWindow = windowManager.get(IWindowList.MINI_WINDOW)
+      miniWindow?.webContents.send(SET_CURRENT_LANGUAGE, lang, locales)
+    }
+    // event.sender.send(SET_CURRENT_LANGUAGE, lang, locales)
+  })
+  ipcMain.on(GET_CURRENT_LANGUAGE, (event: IpcMainEvent) => {
+    const { lang, locales } = i18nManager.getCurrentLocales()
+    event.sender.send(GET_CURRENT_LANGUAGE, lang, locales)
+  })
+}
+
+const handleRPCActions = () => {
+  rpcServer.start()
+}
+
 export default {
   listen () {
     handleGetPluginList()
@@ -347,6 +413,9 @@ export default {
     handlePicGoGalleryDB()
     handleImportLocalPlugin()
     handleOpenFile()
+    handleOpenWindow()
+    handleI18n()
+    handleRPCActions()
   },
   // TODO: separate to single file
   handlePluginUninstall,

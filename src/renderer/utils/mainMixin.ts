@@ -1,30 +1,25 @@
-import { Component, Vue } from 'vue-property-decorator'
-import { ipcRenderer, IpcRendererEvent } from 'electron'
-import { PICGO_SAVE_CONFIG, PICGO_GET_CONFIG } from '#/events/constants'
-import { uuid } from 'uuidv4'
-@Component
-export default class extends Vue {
-  // support string key + value or object config
-  saveConfig (config: IObj | string, value?: any) {
-    if (typeof config === 'string') {
-      config = {
-        [config]: value
-      }
-    }
-    ipcRenderer.send(PICGO_SAVE_CONFIG, config)
-  }
+import { ComponentOptions } from 'vue'
+import { FORCE_UPDATE, GET_PICBEDS } from '~/universal/events/constants'
+import bus from '~/renderer/utils/bus'
+import { ipcRenderer } from 'electron'
+export const mainMixin: ComponentOptions = {
+  inject: ['forceUpdateTime'],
 
-  getConfig<T> (key?: string): Promise<T | undefined> {
-    return new Promise((resolve) => {
-      const callbackId = uuid()
-      const callback = (event: IpcRendererEvent, config: T | undefined, returnCallbackId: string) => {
-        if (returnCallbackId === callbackId) {
-          resolve(config)
-          ipcRenderer.removeListener(PICGO_GET_CONFIG, callback)
-        }
+  created () {
+    // FIXME: may be memory leak
+    this?.$watch('forceUpdateTime', (newVal: number, oldVal: number) => {
+      if (oldVal !== newVal) {
+        this?.$forceUpdate()
       }
-      ipcRenderer.on(PICGO_GET_CONFIG, callback)
-      ipcRenderer.send(PICGO_GET_CONFIG, key, callbackId)
     })
+  },
+
+  methods: {
+    forceUpdate () {
+      bus.emit(FORCE_UPDATE)
+    },
+    getPicBeds () {
+      ipcRenderer.send(GET_PICBEDS)
+    }
   }
 }
